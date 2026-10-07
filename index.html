@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sleep Cycle & Optimal Wake Time Optimizer</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: linear-gradient(135deg, #1e3a5f 0%, #1e40af 100%); min-height: 100vh; }
+  .card { background: rgba(255,255,255,0.97); }
+  .cycle-best { background: #dcfce7; border: 2px solid #22c55e; }
+  .cycle-good { background: #f0f9ff; border: 2px solid #38bdf8; }
+  .cycle-ok   { background: #fafafa; border: 2px solid #e5e7eb; }
+</style>
+</head>
+<body class="p-4 md:p-8">
+<div class="max-w-2xl mx-auto">
+  <div class="card rounded-2xl shadow-2xl p-6 mb-6">
+    <h1 class="text-2xl font-bold text-blue-900 mb-1">Sleep Cycle Optimizer</h1>
+    <p class="text-gray-500 text-sm mb-5">Calculate optimal bedtimes or wake times based on 90-min cycles + 15-min fall-asleep estimate</p>
+
+    <div class="flex rounded-xl overflow-hidden border border-blue-200 mb-6" role="group" aria-label="Mode selection">
+      <button id="modeBedtime" onclick="setMode('bedtime')"
+        class="flex-1 py-2 text-sm font-semibold transition bg-blue-700 text-white">
+        ⏰ Calculate Bedtime
+      </button>
+      <button id="modeWakeup" onclick="setMode('wakeup')"
+        class="flex-1 py-2 text-sm font-semibold transition bg-white text-blue-700">
+        🌅 Calculate Wake Time
+      </button>
+    </div>
+
+    <div id="inputBedtime">
+      <label class="block text-sm font-medium text-gray-700 mb-1" for="wakeTime">Desired Wake Time</label>
+      <input id="wakeTime" type="time" value="07:00"
+        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 mb-4">
+    </div>
+
+    <div id="inputWakeup" class="hidden">
+      <label class="block text-sm font-medium text-gray-700 mb-1" for="bedTime">Bedtime</label>
+      <input id="bedTime" type="time" value="22:30"
+        class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 mb-4">
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="sleepDebt">Sleep Debt this week (hours short)</label>
+        <input id="sleepDebt" type="number" min="0" max="30" value="0" step="0.5"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400">
+      </div>
+      <div class="flex items-end">
+        <button onclick="calculate()"
+          class="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-2 rounded-lg transition">
+          Calculate
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="results" class="hidden card rounded-2xl shadow-2xl p-6 mb-6">
+    <h2 class="text-xl font-bold text-blue-900 mb-1" id="resultsTitle">Ideal Bedtimes</h2>
+    <p class="text-sm text-gray-400 mb-4" id="resultsSubtitle"></p>
+    <div id="cycleCards" class="grid grid-cols-2 gap-3 mb-6"></div>
+
+    <div id="debtSection" class="hidden bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4">
+      <h3 class="font-bold text-amber-800 mb-1">Sleep Debt Recovery</h3>
+      <p id="debtAdvice" class="text-sm text-amber-700"></p>
+    </div>
+
+    <div class="bg-blue-50 rounded-xl p-4 mb-4">
+      <h3 class="font-bold text-blue-800 mb-2">Nap Guide</h3>
+      <div class="grid grid-cols-2 gap-3 text-sm">
+        <div class="bg-white rounded-lg p-3 text-center shadow-sm">
+          <div class="text-2xl mb-1">⚡</div>
+          <div class="font-semibold text-blue-700">Power Nap</div>
+          <div class="text-gray-500">20 minutes</div>
+          <div class="text-xs text-gray-400 mt-1">Boosts alertness without sleep inertia</div>
+        </div>
+        <div class="bg-white rounded-lg p-3 text-center shadow-sm">
+          <div class="text-2xl mb-1">💤</div>
+          <div class="font-semibold text-blue-700">Full Cycle Nap</div>
+          <div class="text-gray-500">90 minutes</div>
+          <div class="text-xs text-gray-400 mt-1">Completes one full sleep cycle; aids creativity</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="tipBox" class="rounded-xl p-4 bg-indigo-50 border border-indigo-200">
+      <h3 class="font-bold text-indigo-800 mb-1">Tip for Right Now</h3>
+      <p id="timeTip" class="text-sm text-indigo-700"></p>
+    </div>
+  </div>
+</div>
+
+<script>
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+const FALL_ASLEEP_MIN = 15;
+const CYCLE_MIN = 90;
+const CYCLES = [3, 4, 5, 6];
+const CYCLE_HOURS = CYCLES.map(c => c * CYCLE_MIN / 60);
+
+let currentMode = 'bedtime';
+
+function setMode(mode) {
+  currentMode = mode;
+  document.getElementById('inputBedtime').classList.toggle('hidden', mode !== 'bedtime');
+  document.getElementById('inputWakeup').classList.toggle('hidden', mode !== 'wakeup');
+  document.getElementById('modeBedtime').className = 'flex-1 py-2 text-sm font-semibold transition ' +
+    (mode === 'bedtime' ? 'bg-blue-700 text-white' : 'bg-white text-blue-700');
+  document.getElementById('modeWakeup').className = 'flex-1 py-2 text-sm font-semibold transition ' +
+    (mode === 'wakeup' ? 'bg-blue-700 text-white' : 'bg-white text-blue-700');
+  localStorage.setItem('sleepMode', mode);
+}
+
+function parseTime(str) {
+  const [h, m] = str.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function formatTime(totalMin) {
+  let h = Math.floor(totalMin / 60) % 24;
+  if (h < 0) h += 24;
+  const m = ((totalMin % 60) + 60) % 60;
+  const period = h >= 12 ? 'PM' : 'AM';
+  const displayH = h % 12 === 0 ? 12 : h % 12;
+  return `${displayH}:${String(m).padStart(2, '0')} ${period}`;
+}
+
+function calculate() {
+  const debt = parseFloat(document.getElementById('sleepDebt').value) || 0;
+
+  let times = [];
+  let labels = [];
+  let best = 4; // index of recommended (5 cycles = 7.5h)
+
+  if (currentMode === 'bedtime') {
+    const wakeMin = parseTime(document.getElementById('wakeTime').value);
+    document.getElementById('resultsTitle').textContent = 'Ideal Bedtimes';
+    document.getElementById('resultsSubtitle').textContent =
+      `To wake at ${formatTime(wakeMin)} feeling refreshed`;
+
+    CYCLES.forEach((c, i) => {
+      const totalSleep = c * CYCLE_MIN + FALL_ASLEEP_MIN;
+      const bedMin = wakeMin - totalSleep;
+      times.push(formatTime(bedMin));
+      labels.push(`${c} cycles · ${(c * 1.5).toFixed(1)}h sleep`);
+    });
+    best = 2; // 5 cycles = 7.5h, index 2
+  } else {
+    const bedMin = parseTime(document.getElementById('bedTime').value);
+    document.getElementById('resultsTitle').textContent = 'Ideal Wake Times';
+    document.getElementById('resultsSubtitle').textContent =
+      `Going to bed at ${formatTime(bedMin)}`;
+
+    CYCLES.forEach((c, i) => {
+      const totalSleep = c * CYCLE_MIN + FALL_ASLEEP_MIN;
+      const wakeMin = bedMin + totalSleep;
+      times.push(formatTime(wakeMin));
+      labels.push(`${c} cycles · ${(c * 1.5).toFixed(1)}h sleep`);
+    });
+    best = 2;
+  }
+
+  let cardsHtml = '';
+  times.forEach((t, i) => {
+    const isBest = i === best;
+    const isGood = i === best - 1 || i === best + 1;
+    const cls = isBest ? 'cycle-best' : isGood ? 'cycle-good' : 'cycle-ok';
+    cardsHtml += `<div class="${cls} rounded-xl p-3 text-center relative">
+      ${isBest ? '<span class="absolute top-1 right-2 text-xs bg-green-500 text-white px-1.5 rounded-full">Recommended</span>' : ''}
+      <div class="text-xl font-bold text-gray-800 mt-1">${escapeHtml(t)}</div>
+      <div class="text-xs text-gray-500 mt-0.5">${escapeHtml(labels[i])}</div>
+    </div>`;
+  });
+  document.getElementById('cycleCards').innerHTML = cardsHtml;
+
+  const debtSec = document.getElementById('debtSection');
+  if (debt > 0) {
+    debtSec.classList.remove('hidden');
+    const daysNeeded = Math.ceil(debt / 1.5);
+    document.getElementById('debtAdvice').textContent =
+      `You're ${debt}h short this week. To recover: add one extra sleep cycle per night for ${daysNeeded} night(s), or take a 90-min nap on ${Math.ceil(debt / 1.5)} day(s). Avoid trying to recover all at once — gradual repayment is more effective.`;
+  } else {
+    debtSec.classList.add('hidden');
+  }
+
+  document.getElementById('timeTip').textContent = getCurrentTimeTip();
+  document.getElementById('results').classList.remove('hidden');
+
+  localStorage.setItem('sleepState', JSON.stringify({
+    mode: currentMode,
+    wakeTime: document.getElementById('wakeTime').value,
+    bedTime: document.getElementById('bedTime').value,
+    debt
+  }));
+}
+
+function getCurrentTimeTip() {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 8) return 'Good morning! Expose yourself to bright light immediately to reset your circadian rhythm.';
+  if (h >= 8 && h < 12) return 'Morning energy is peaking. Schedule your most demanding cognitive tasks now.';
+  if (h >= 12 && h < 14) return 'Post-lunch alertness dip incoming. A 20-min power nap between 1-3 PM can help.';
+  if (h >= 14 && h < 17) return 'Afternoon: physical performance peaks. Good time for exercise or creative work.';
+  if (h >= 17 && h < 20) return 'Evening: start dimming lights and reducing screen brightness to prepare melatonin release.';
+  if (h >= 20 && h < 22) return 'Wind-down time. Avoid caffeine, intense exercise, and bright screens for better sleep onset.';
+  if (h >= 22 || h < 1) return 'Getting close to bedtime. Keep room cool (65-68°F / 18-20°C) for optimal sleep.';
+  return 'Late night: if you must be awake, use red-tinted lighting to minimize circadian disruption.';
+}
+
+// Restore state
+const saved = JSON.parse(localStorage.getItem('sleepState') || 'null');
+if (saved) {
+  setMode(saved.mode || 'bedtime');
+  if (saved.wakeTime) document.getElementById('wakeTime').value = saved.wakeTime;
+  if (saved.bedTime) document.getElementById('bedTime').value = saved.bedTime;
+  if (saved.debt !== undefined) document.getElementById('sleepDebt').value = saved.debt;
+} else {
+  setMode('bedtime');
+}
+</script>
+</body>
+</html>
